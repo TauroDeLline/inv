@@ -1,8 +1,11 @@
 #!/bin/bash
 
-# Обновление системы и установка необходимых пакетов
-apt update && apt upgrade -y
-apt install zip nano openssl wget -y
+# Предварительно настраиваем Debconf на автоматический ответ "да" для всех запросов
+export DEBIAN_FRONTEND=noninteractive
+
+# Обновление системы и установка необходимых пакетов без запросов
+apt-get update && apt-get -y upgrade
+apt-get install -y zip nano openssl wget needrestart curl
 
 # Скачивание и распаковка Xray
 wget https://github.com/XTLS/Xray-core/releases/download/v1.8.1/Xray-linux-64.zip -O /tmp/Xray-linux-64.zip
@@ -71,20 +74,16 @@ cat <<EOF >/opt/xray/config.json
       },
       "streamSettings": {
         "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "show": false,
-          "dest": "dl.google.com:443",
-          "xver": 0,
-          "serverNames": [
-            "dl.google.com"
+        "security": "none",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
           ],
-          "privateKey": "$PRIVATE_KEY",
-          "minClientVer": "",
-          "maxClientVer": "",
-          "maxTimeDiff": 0,
-          "shortIds": [
-            "$SHORT_ID"
+          "certificates": [
+            {
+              "certificateFile": "/path/to/fullchain.pem",
+              "keyFile": "/path/to/privkey.pem"
+            }
           ]
         }
       },
@@ -100,11 +99,7 @@ cat <<EOF >/opt/xray/config.json
   "outbounds": [
     {
       "protocol": "freedom",
-      "tag": "direct"
-    },
-    {
-      "protocol": "blackhole",
-      "tag": "block"
+      "settings": {}
     }
   ]
 }
@@ -119,9 +114,6 @@ echo "Private key: $PRIVATE_KEY"
 echo "Public key: $PUBLIC_KEY"
 echo "Short ID: $SHORT_ID"
 
-# Проверка статуса Xray и поиск ошибок
-if journalctl -u xray -n 20 | grep -i error; then
-    echo "Обнаружены ошибки в работе Xray. Проверьте логи выше."
-else
-    echo "Xray запущен без ошибок."
-fi
+# Вывод внешнего IP-адреса сервера
+SERVER_IP=$(curl -s ifconfig.me)
+echo "Server IP: $SERVER_IP"
