@@ -1,0 +1,127 @@
+#!/bin/bash
+
+# Обновление системы и установка необходимых пакетов
+apt update && apt upgrade -y
+apt install zip nano openssl wget -y
+
+# Скачивание и распаковка Xray
+wget https://github.com/XTLS/Xray-core/releases/download/v1.8.1/Xray-linux-64.zip -O /tmp/Xray-linux-64.zip
+mkdir -p /opt/xray
+unzip /tmp/Xray-linux-64.zip -d /opt/xray
+chmod +x /opt/xray/xray
+
+# Создание и настройка сервиса systemd для Xray
+cat <<EOF >/usr/lib/systemd/system/xray.service
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=nobody
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/opt/xray/xray run -config /opt/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Включение автозапуска Xray
+systemctl enable xray
+
+# Генерация параметров
+UUID=$(/opt/xray/xray uuid)
+X25519_KEYS=$(/opt/xray/xray x25519)
+SHORT_ID=$(openssl rand -hex 8)
+
+# Разбор сгенерированных ключей x25519
+PRIVATE_KEY=$(echo "$X25519_KEYS" | grep 'Private key' | awk '{print $3}')
+PUBLIC_KEY=$(echo "$X25519_KEYS" | grep 'Public key' | awk '{print $3}')
+
+# Настройка конфигурационного файла Xray
+cat <<EOF >/opt/xray/config.json
+{
+  "log": {
+    "loglevel": "info"
+  },
+  "routing": {
+    "rules": [],
+    "domainStrategy": "AsIs"
+  },
+  "inbounds": [
+    {
+      "port": 443,
+      "protocol": "vless",
+      "tag": "vless_tls",
+      "settings": {
+        "clients": [
+          {
+            "id": "$UUID",
+            "email": "user1@myserver",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "dl.google.com:443",
+          "xver": 0,
+          "serverNames": [
+            "dl.google.com"
+          ],
+          "privateKey": "$PRIVATE_KEY",
+          "minClientVer": "",
+          "maxClientVer": "",
+          "maxTimeDiff": 0,
+          "shortIds": [
+            "$SHORT_ID"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ]
+}
+EOF
+
+# Перезапуск Xray
+systemctl restart xray
+
+# Вывод сгенерированных параметров
+echo "UUID: $UUID"
+echo "Private key: $PRIVATE_KEY"
+echo "Public key: $PUBLIC_KEY"
+echo "Short ID: $SHORT_ID"
+
+# Проверка статуса Xray и поиск ошибок
+if journalctl -u xray -n 20 | grep -i error; then
+    echo "Обнаружены ошибки в работе Xray. Проверьте логи выше."
+else
+    echo "Xray запущен без ошибок."
+fi
